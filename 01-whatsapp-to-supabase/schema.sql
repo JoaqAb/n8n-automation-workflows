@@ -1,0 +1,1 @@
+-- Esquema de Supabase para 01-whatsapp-to-supabase (pendiente).
