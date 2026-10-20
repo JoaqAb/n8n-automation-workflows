@@ -2,3 +2,8 @@
 datos/storage/
 __pycache__/
 *.log
+
+# El login de n8n para capturar tramos, nunca al repo
+.n8n-cred
+node_modules
+resetear-login.log

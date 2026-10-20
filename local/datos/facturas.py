@@ -40,6 +40,22 @@ def fuente(ruta, tam):
         return ImageFont.load_default()
 
 
+def plata(monto, moneda):
+    """El monto escrito como lo escribe su moneda.
+
+    Antes era "{:,.2f}".replace(",", "."), que sobre 62000 daba "62.000.00":
+    cambiaba la coma de los miles por punto y dejaba el punto decimal, asi que
+    quedaban dos puntos. Y lo aplicaba igual a los dolares, que no se escriben
+    a la argentina en ningun lado.
+    """
+    s = "{:,.2f}".format(monto)          # 62,000.00
+    if moneda == "USD":
+        return s
+    # Pesos: miles con punto, decimales con coma. El \x00 evita pisar un
+    # reemplazo con el otro.
+    return s.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
 def dibujar(nombre, proveedor, numero, oc, moneda, lineas, degradada):
     monto = sum(c * p for _, c, _, p in lineas)
     an, al = 1240, 1754  # A4 a 150 dpi
@@ -69,12 +85,12 @@ def dibujar(nombre, proveedor, numero, oc, moneda, lineas, degradada):
         d.text((70, y), desc, font=txt, fill="black")
         d.text((610, y), "%g %s" % (cant, unidad), font=txt, fill="black")
         d.text((760, y), "%0.2f" % precio, font=mono, fill="black")
-        imp = "{:,.2f}".format(cant * precio).replace(",", ".")
+        imp = plata(cant * precio, moneda)
         d.text((an - 70 - d.textlength(imp, font=mono), y), imp, font=mono, fill="black")
         y += 44
     d.line((70, y + 10, an - 70, y + 10), fill=(150, 150, 150), width=2)
 
-    total = "%s %s" % (moneda, "{:,.2f}".format(monto).replace(",", "."))
+    total = "%s %s" % (moneda, plata(monto, moneda))
     ftot = fuente(FB, 30)
     d.text((700, y + 50), "TOTAL", font=neg, fill="black")
     d.text((an - 70 - d.textlength(total, font=ftot), y + 50), total, font=ftot, fill="black")

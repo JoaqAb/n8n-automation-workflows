@@ -6,15 +6,35 @@
 //
 //   node tramos.mjs <archivo-de-tramos.json> <carpeta de salida>
 import { chromium } from 'playwright';
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const [lista, destino, altoArg] = process.argv.slice(2);
 const ALTO = Number(altoArg || 1000);
+// Cuanto puede asomar un vecino adentro del recorte sin que se lea como un
+// pedazo cortado. Seis pixeles de pantalla: menos que un trazo de letra.
+const ASOMO = Number(process.env.ASOMO ?? 6);
 const tramos = JSON.parse(readFileSync(lista, 'utf8'));
 mkdirSync(destino, { recursive: true });
-const txt = readFileSync('/tmp/claude-1000/-home-joaquin-proyectos/93f977d9-f8dc-41c2-967b-ba835c581639/scratchpad/n8n-local.txt', 'utf8');
-const email = txt.match(/email:\s*(\S+)/)[1], pass = txt.match(/pass:\s*(\S+)/)[1];
+// El login de n8n sale de local/.n8n-cred, que esta gitignoreado:
+//
+//   email: vos@ejemplo.test
+//   pass: loquesea
+//
+// Antes esto leia un archivo en el scratchpad de una sesion, que se borro y
+// dejo el script sin poder entrar. Las variables de entorno N8N_EMAIL y
+// N8N_PASS pisan el archivo si estan puestas.
+const credEnv = process.env.N8N_EMAIL && process.env.N8N_PASS;
+const rutaCred = path.join(path.dirname(fileURLToPath(import.meta.url)), '.n8n-cred');
+if (!credEnv && !existsSync(rutaCred)) {
+  console.error(`falta ${rutaCred} (o las variables N8N_EMAIL y N8N_PASS).\n` +
+                'Son dos lineas: "email: ..." y "pass: ...".');
+  process.exit(1);
+}
+const txt = credEnv ? '' : readFileSync(rutaCred, 'utf8');
+const email = process.env.N8N_EMAIL ?? txt.match(/email:\s*(\S+)/)[1];
+const pass = process.env.N8N_PASS ?? txt.match(/pass:\s*(\S+)/)[1];
 
 const b = await chromium.launch({ headless: true });
 const p = await (await b.newContext({ viewport: { width: 1600, height: ALTO }, deviceScaleFactor: 2 })).newPage();
@@ -97,7 +117,7 @@ for (const t of tramos) {
     await p.waitForTimeout(450);
     c = await caja(t.nodos);
   }
-  let clip = null;
+  let clip = null, partidos = 0, asomos = [];
   for (let intento = 0; intento < 4 && !clip; intento++) {
   if (intento) { await p.keyboard.press('-'); await p.waitForTimeout(500); c = await caja(t.nodos); }
   for (let i = 0; i < 9 && c; i++) {
@@ -144,11 +164,37 @@ for (const t of tramos) {
   const entra = tentativa.x <= c.x && tentativa.y <= c.y
     && tentativa.x + tentativa.width >= c.x2 && tentativa.y + tentativa.height >= c.y2
     && tentativa.x + tentativa.width <= 1600 && tentativa.y + tentativa.height <= ALTO;
-  if (entra) clip = tentativa;
+  // Las seis vueltas de arriba son el intento, no la garantia: si no convergen,
+  // antes la captura se guardaba igual. Asi salieron los tramos del caso 06 con
+  // una "n" suelta a la izquierda y un "Res" cortado a la derecha. Ademas el
+  // Math.max(0, ...) puede traer el borde a 0 y partir un vecino que asoma
+  // desde fuera de la pantalla. Aca se verifica el recorte final: un vecino
+  // entero adentro no molesta, uno partido por el borde si.
+  // Lo que delata un recorte no es que roce un vecino, es que deje adentro un
+  // PEDAZO RECONOCIBLE de el. Asi que no se cuenta si cruza, se mide cuanto
+  // asoma: la interseccion del vecino con el recorte. Si su lado mas corto no
+  // llega a ASOMO px, es un roce de antialias o de sombra y no se ve. Si lo
+  // pasa, ahi hay media etiqueta o medio nodo, que es lo que salio en el caso
+  // 06 como una "n" suelta a la izquierda y un "Res" cortado a la derecha.
+  asomos = entra ? c.ajenos.map((a) => {
+    const bx1 = tentativa.x, by1 = tentativa.y;
+    const bx2 = bx1 + tentativa.width, by2 = by1 + tentativa.height;
+    const entero = a.x >= bx1 && a.x2 <= bx2 && a.y >= by1 && a.y2 <= by2;
+    if (entero) return null;
+    const ancho = Math.min(a.x2, bx2) - Math.max(a.x, bx1);
+    const alto = Math.min(a.y2, by2) - Math.max(a.y, by1);
+    if (ancho <= 0 || alto <= 0) return null;             // no cruza
+    return { ancho: Math.round(ancho), alto: Math.round(alto),
+             lado: a.x < bx1 ? 'izq' : a.x2 > bx2 ? 'der' : a.y < by1 ? 'arriba' : 'abajo' };
+  }).filter((v) => v && Math.min(v.ancho, v.alto) > ASOMO) : [];
+  partidos = asomos.length;
+  if (entra && !partidos) clip = tentativa;
   }
   if (!clip) {
-    console.log(`FALLA  ${t.nombre}  el tramo no entra en la pantalla sin cortar un vecino`);
-    fallas.push({ nombre: t.nombre, motivo: 'no entra' });
+    const detalle = asomos.map((a) => `${a.lado} ${a.ancho}x${a.alto}`).join(', ');
+    const motivo = partidos ? `${partidos} vecinos partidos: ${detalle}` : 'no entra en la pantalla sin cortar un vecino';
+    console.log(`FALLA  ${t.nombre}  ${motivo}`);
+    fallas.push({ nombre: t.nombre, motivo });
     continue;
   }
   // El cuerpo de la etiqueta en la lamina: 16 px de hoja de estilo, por la escala del lienzo,
