@@ -1,0 +1,9 @@
+{
+  "nombre": "Vanina Robles",
+  "telefono": "+5493815550303",
+  "email": "vanina.robles@ejemplo.test",
+  "direccion": "San Lorenzo 220",
+  "ciudad": "San Miguel de Tucumán",
+  "tipo_cliente": "residencial",
+  "urgencia": "explorando"
+}

@@ -1,0 +1,10 @@
+{
+  "nombre": "Lucia Ferreyra",
+  "telefono": "+5493815550101",
+  "email": "lucia.ferreyra@ejemplo.test",
+  "direccion": "Av. Aconquija 1450",
+  "ciudad": "Yerba Buena",
+  "tipo_cliente": "residencial",
+  "consumo_kwh": 850,
+  "urgencia": "este_mes"
+}

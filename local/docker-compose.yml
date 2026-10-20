@@ -1,0 +1,80 @@
+# Entorno local para correr los workflows de verdad, sin tocar ningun otro stack
+# de la maquina. Todo lo que hay aca es de un solo usuario y escucha en puertos
+# propios: las claves JWT de abajo son locales y no abren nada afuera.
+#
+#   pf-db    Postgres con los mismos roles que Supabase (service_role bypassrls)
+#   pf-rest  PostgREST, el mismo motor de API que usa Supabase
+#   pf-gw    puerta que traduce /rest/v1 y resuelve /storage/v1/object
+#   pf-mail  GreenMail, para que el disparador IMAP del caso 02 tenga un buzon real
+#
+# Levantar:  docker compose -f local/docker-compose.yml up -d
+# La red pf-net se comparte con el contenedor n8n-portfolio:
+#   docker network connect pf-net n8n-portfolio
+
+name: portfolio-n8n
+
+services:
+  pf-db:
+    image: postgres:16
+    container_name: pf-db
+    environment:
+      POSTGRES_PASSWORD: portfolio-local
+      POSTGRES_DB: portfolio
+    ports: ["55432:5432"]
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - pf-db-data:/var/lib/postgresql/data
+    networks: [pf-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d portfolio"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  pf-rest:
+    image: public.ecr.aws/supabase/postgrest:v14.12
+    container_name: pf-rest
+    depends_on:
+      pf-db: {condition: service_healthy}
+    environment:
+      PGRST_DB_URI: postgres://authenticator:portfolio-local@pf-db:5432/portfolio
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: portfolio-local-jwt-secret-de-32-chars-o-mas
+      PGRST_DB_CHANNEL_ENABLED: "true"
+      PGRST_LOG_LEVEL: info
+    networks: [pf-net]
+
+  pf-gw:
+    image: python:3.12-alpine
+    container_name: pf-gw
+    depends_on: [pf-rest]
+    command: ["python", "/app/gateway.py"]
+    environment:
+      REST_UPSTREAM: http://pf-rest:3000
+      STORAGE_DIR: /data
+      PORT: "8080"
+    ports: ["54330:8080"]
+    volumes:
+      - ./gw:/app:ro
+      - ./datos/storage:/data
+    networks: [pf-net]
+
+  pf-mail:
+    image: greenmail/standalone:2.1.9
+    container_name: pf-mail
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.auth.disabled
+        -Dgreenmail.verbose
+    ports: ["53025:3025", "53143:3143", "58080:8080"]
+    networks: [pf-net]
+
+volumes:
+  pf-db-data:
+
+networks:
+  pf-net:
+    name: pf-net

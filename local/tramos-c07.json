@@ -1,0 +1,119 @@
+[
+ {
+  "nombre": "c07-01-entrada",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/43",
+  "nodos": [
+   "Email Trigger - Facturas",
+   "Upload Attachment",
+   "Insert Factura (Raw)"
+  ]
+ },
+ {
+  "nombre": "c07-02-extraccion",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/43",
+  "nodos": [
+   "Insert Factura (Raw)",
+   "Extract With AI",
+   "Parse AI Response"
+  ]
+ },
+ {
+  "nombre": "c07-03-guarda",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/43",
+  "nodos": [
+   "Parse AI Response",
+   "Update Factura - Extraida",
+   "Check Duplicate"
+  ]
+ },
+ {
+  "nombre": "c07-04-duplicada",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/52",
+  "nodos": [
+   "If Duplicate",
+   "Mark Duplicada",
+   "Notify - Duplicada"
+  ]
+ },
+ {
+  "nombre": "c07-05-confianza",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/50",
+  "nodos": [
+   "If Duplicate",
+   "If Confianza Baja",
+   "Mark Excepcion Baja Confianza"
+  ]
+ },
+ {
+  "nombre": "c07-06-sin-oc",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/45",
+  "nodos": [
+   "Check OC",
+   "If Sin OC",
+   "Mark Excepcion Sin OC"
+  ]
+ },
+ {
+  "nombre": "c07-07-monto",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/44",
+  "nodos": [
+   "Compute Diff Monto",
+   "If Monto Diff",
+   "Mark Excepcion Monto"
+  ]
+ },
+ {
+  "nombre": "c07-08-moneda",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/47",
+  "nodos": [
+   "Check Proveedor Moneda",
+   "If Moneda Distinta",
+   "Mark Excepcion Moneda"
+  ]
+ },
+ {
+  "nombre": "c07-09-concilia",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/43",
+  "nodos": [
+   "If Moneda Distinta",
+   "Mark Conciliada",
+   "Notify - Conciliada"
+  ]
+ },
+ {
+  "nombre": "c07-10-cola",
+  "url": "http://localhost:5678/workflow/wf02intake/executions/44",
+  "nodos": [
+   "Mark Excepcion Moneda",
+   "Mark Pendiente Aprobacion",
+   "Alert - Pendiente Aprobacion"
+  ]
+ },
+ {
+  "nombre": "c07-11-aprobar",
+  "url": "http://localhost:5678/workflow/wf02approve/executions/53",
+  "nodos": [
+   "Webhook - Decision",
+   "If Aprobar",
+   "Update Factura - Aprobada"
+  ]
+ },
+ {
+  "nombre": "c07-12-conciliar",
+  "url": "http://localhost:5678/workflow/wf02approve/executions/53",
+  "nodos": [
+   "Update Factura - Aprobada",
+   "Update Factura - Conciliada",
+   "Respond - OK"
+  ]
+ },
+ {
+  "nombre": "c07-13-rechazar",
+  "url": "http://localhost:5678/workflow/wf02approve/executions/51",
+  "nodos": [
+   "If Aprobar",
+   "Update Factura - Rechazada",
+   "Notify - Rechazada"
+  ]
+ }
+]

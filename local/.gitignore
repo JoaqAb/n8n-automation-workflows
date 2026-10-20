@@ -1,0 +1,4 @@
+# Lo que escriben los contenedores y las corridas, no el repo
+datos/storage/
+__pycache__/
+*.log

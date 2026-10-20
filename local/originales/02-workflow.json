@@ -1,0 +1,454 @@
+{
+  "name": "Andes Freight — Extracción y validación de facturas",
+  "meta": {
+    "note": "Export sanitizado. Sin IDs de cuenta, credenciales ni datos reales de proveedores. Caso self-initiated de portfolio, negocio ficticio (Andes Freight, freight forwarding). Ver README.md de esta carpeta y docs/portfolio/N8N_CASES.md en lokebox-landing."
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "nodes": [
+    {
+      "id": "w01",
+      "name": "Email Trigger - Facturas",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "mailbox": "INBOX",
+        "options": { "forceReconnect": 60 },
+        "format": "resolved"
+      },
+      "notes": "Filtra por asunto/remitente de proveedores conocidos en el nodo siguiente, no acá — mantener el trigger simple y la lógica de negocio en nodos explícitos."
+    },
+    {
+      "id": "w02",
+      "name": "Upload Attachment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://<project>.supabase.co/storage/v1/object/facturas/' + Date.now() + '-' + $binary.attachment_0.fileName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBinaryData": true,
+        "inputDataFieldName": "attachment_0",
+        "options": {}
+      },
+      "notes": "Sube el adjunto a Supabase Storage antes que nada, para tener una URL estable que sobreviva aunque el resto del pipeline falle."
+    },
+    {
+      "id": "w03",
+      "name": "Insert Factura (Raw)",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [440, 0],
+      "parameters": {
+        "operation": "create",
+        "tableId": "facturas",
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "raw_email_subject", "fieldValue": "={{ $('Email Trigger - Facturas').item.json.subject }}" },
+            { "fieldId": "raw_email_from", "fieldValue": "={{ $('Email Trigger - Facturas').item.json.from }}" },
+            { "fieldId": "raw_attachment_url", "fieldValue": "={{ $json.Key }}" }
+          ]
+        }
+      },
+      "notes": "Se inserta con estado='recibida' (default de la columna) apenas hay una URL de adjunto. Nunca se pierde el email de origen aunque la extracción falle después."
+    },
+    {
+      "id": "w04",
+      "name": "Extract With AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonBody": "={{ { \"model\": \"claude-sonnet-5\", \"max_tokens\": 500, \"messages\": [ { \"role\": \"user\", \"content\": [ { \"type\": \"image\", \"source\": { \"type\": \"url\", \"url\": $('Insert Factura (Raw)').item.json.raw_attachment_url } }, { \"type\": \"text\", \"text\": \"Extraé de esta factura: proveedor, numero_factura, monto, moneda (ARS o USD), fecha_emision, numero_oc si aparece, lineas (array de {descripcion, cantidad, precio_unitario}). Devolvé JSON con esos campos más confianza_extraccion (0-1).\" } ] } ] } }}",
+        "options": {}
+      },
+      "notes": "Misma técnica de extracción con Claude vision que bot/claude.js en lokebox-app (producción real, distingue recibo de cheque), aplicada acá a facturas de proveedor."
+    },
+    {
+      "id": "w05",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [880, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            { "id": "d1", "name": "proveedor", "type": "string", "value": "={{ JSON.parse($json.content[0].text).proveedor }}" },
+            { "id": "d2", "name": "numero_factura", "type": "string", "value": "={{ JSON.parse($json.content[0].text).numero_factura }}" },
+            { "id": "d3", "name": "monto", "type": "number", "value": "={{ JSON.parse($json.content[0].text).monto }}" },
+            { "id": "d4", "name": "moneda", "type": "string", "value": "={{ JSON.parse($json.content[0].text).moneda }}" },
+            { "id": "d5", "name": "fecha_emision", "type": "string", "value": "={{ JSON.parse($json.content[0].text).fecha_emision }}" },
+            { "id": "d6", "name": "numero_oc", "type": "string", "value": "={{ JSON.parse($json.content[0].text).numero_oc || null }}" },
+            { "id": "d7", "name": "lineas", "type": "object", "value": "={{ JSON.parse($json.content[0].text).lineas }}" },
+            { "id": "d8", "name": "confianza_extraccion", "type": "number", "value": "={{ JSON.parse($json.content[0].text).confianza_extraccion }}" },
+            { "id": "d9", "name": "factura_id", "type": "string", "value": "={{ $('Insert Factura (Raw)').item.json.id }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "w06",
+      "name": "Update Factura - Extraida",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1100, 0],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "estado", "fieldValue": "extraida" },
+            { "fieldId": "proveedor", "fieldValue": "={{ $json.proveedor }}" },
+            { "fieldId": "numero_factura", "fieldValue": "={{ $json.numero_factura }}" },
+            { "fieldId": "monto", "fieldValue": "={{ $json.monto }}" },
+            { "fieldId": "moneda", "fieldValue": "={{ $json.moneda }}" },
+            { "fieldId": "fecha_emision", "fieldValue": "={{ $json.fecha_emision }}" },
+            { "fieldId": "numero_oc", "fieldValue": "={{ $json.numero_oc }}" },
+            { "fieldId": "lineas", "fieldValue": "={{ $json.lineas }}" },
+            { "fieldId": "confianza_extraccion", "fieldValue": "={{ $json.confianza_extraccion }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "w07",
+      "name": "Check Duplicate",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1320, 0],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            { "keyName": "proveedor", "condition": "eq", "keyValue": "={{ $json.proveedor }}" },
+            { "keyName": "numero_factura", "condition": "eq", "keyValue": "={{ $json.numero_factura }}" },
+            { "keyName": "id", "condition": "neq", "keyValue": "={{ $json.factura_id }}" }
+          ]
+        }
+      },
+      "notes": "Edge case: mismo proveedor + mismo número de factura ya existe (reenvío de email, o doble carga por error)."
+    },
+    {
+      "id": "w08",
+      "name": "If Duplicate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1540, 0],
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "leftValue": "={{ $json.length }}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } }]
+        }
+      }
+    },
+    {
+      "id": "w09",
+      "name": "Mark Duplicada",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1760, -100],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": { "fieldValues": [{ "fieldId": "estado", "fieldValue": "duplicada" }] }
+      }
+    },
+    {
+      "id": "w10",
+      "name": "Notify - Duplicada",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1980, -100],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": "#andesfreight-cuentas-a-pagar",
+        "text": "=Factura {{ $json.numero_factura }} de {{ $json.proveedor }} llegó de nuevo, se marcó duplicada, no se generó una excepción nueva."
+      }
+    },
+    {
+      "id": "w11",
+      "name": "If Confianza Baja",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1760, 100],
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "leftValue": "={{ $json.confianza_extraccion }}", "rightValue": 0.75, "operator": { "type": "number", "operation": "lt" } }]
+        }
+      },
+      "notes": "Edge case: OCR/extracción de baja confianza nunca se adivina, va a cola de aprobación con el motivo explícito."
+    },
+    {
+      "id": "w12",
+      "name": "Mark Excepcion Baja Confianza",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1980, 0],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "estado", "fieldValue": "excepcion_baja_confianza" },
+            { "fieldId": "motivo_excepcion", "fieldValue": "={{ \"confianza_extraccion=\" + $json.confianza_extraccion + \" por debajo del umbral 0.75\" }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "w13",
+      "name": "Check OC",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1760, 300],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "ordenes_compra",
+        "filterType": "manual",
+        "filters": { "conditions": [{ "keyName": "numero_oc", "condition": "eq", "keyValue": "={{ $json.numero_oc }}" }] }
+      }
+    },
+    {
+      "id": "w14",
+      "name": "If Sin OC",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1980, 300],
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "leftValue": "={{ $json.length }}", "rightValue": 0, "operator": { "type": "number", "operation": "equal" } }]
+        }
+      },
+      "notes": "Edge case: factura sin orden de compra asociada (numero_oc vacío, o no existe en el catálogo) va a excepción explícita, nunca se concilia a ciegas."
+    },
+    {
+      "id": "w15",
+      "name": "Mark Excepcion Sin OC",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2200, 200],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": { "fieldValues": [{ "fieldId": "estado", "fieldValue": "excepcion_sin_oc" }, { "fieldId": "motivo_excepcion", "fieldValue": "Sin orden de compra asociada" }] }
+      }
+    },
+    {
+      "id": "w16",
+      "name": "Compute Diff Monto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 400],
+      "parameters": {
+        "jsCode": "const factura = $input.first().json;\nconst oc = $('Check OC').first().json[0];\nconst diffPct = Math.abs(factura.monto - oc.monto) / oc.monto;\nreturn [{ json: { ...factura, oc_monto: oc.monto, oc_moneda: oc.moneda, diff_pct: diffPct } }];"
+      },
+      "notes": "Umbral de tolerancia: 5%. Diferencias mayores no se autoaprueban (ver 'If Monto Diff')."
+    },
+    {
+      "id": "w17",
+      "name": "If Monto Diff",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2420, 400],
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "leftValue": "={{ $json.diff_pct }}", "rightValue": 0.05, "operator": { "type": "number", "operation": "gt" } }]
+        }
+      }
+    },
+    {
+      "id": "w18",
+      "name": "Mark Excepcion Monto",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2640, 300],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "estado", "fieldValue": "excepcion_monto" },
+            { "fieldId": "motivo_excepcion", "fieldValue": "={{ \"Monto factura \" + $json.monto + \" difiere \" + (Math.round($json.diff_pct * 1000) / 10) + \"% de la OC (\" + $json.oc_monto + \")\" }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "w19",
+      "name": "Check Proveedor Moneda",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [2640, 500],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "proveedores",
+        "filterType": "manual",
+        "filters": { "conditions": [{ "keyName": "nombre", "condition": "eq", "keyValue": "={{ $json.proveedor }}" }] }
+      }
+    },
+    {
+      "id": "w20",
+      "name": "If Moneda Distinta",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2860, 500],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            { "leftValue": "={{ $('Compute Diff Monto').first().json.moneda }}", "rightValue": "={{ $json[0].moneda_esperada }}", "operator": { "type": "string", "operation": "notEquals" } }
+          ]
+        }
+      },
+      "notes": "Edge case: factura en una moneda distinta a la que ese proveedor usa habitualmente (ej. Global Reefer Parts factura en ARS cuando siempre facturó en USD) nunca se convierte sola, se marca excepción."
+    },
+    {
+      "id": "w21",
+      "name": "Mark Excepcion Moneda",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [3080, 400],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "estado", "fieldValue": "excepcion_moneda" },
+            { "fieldId": "motivo_excepcion", "fieldValue": "={{ \"Moneda \" + $('Compute Diff Monto').first().json.moneda + \" distinta a la esperada (\" + $json[0].moneda_esperada + \") para este proveedor\" }}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "w22",
+      "name": "Mark Pendiente Aprobacion",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [3300, 300],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": { "fieldValues": [{ "fieldId": "estado", "fieldValue": "pendiente_aprobacion" }] }
+      },
+      "notes": "Punto de confluencia: cualquiera de las 4 excepciones (baja confianza, sin OC, monto, moneda) termina acá antes de notificar. La decisión humana la toma el workflow separado workflow-approval.json."
+    },
+    {
+      "id": "w23",
+      "name": "Alert - Pendiente Aprobacion",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [3520, 300],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": "#andesfreight-cuentas-a-pagar",
+        "text": "=Factura {{ $json.numero_factura }} de {{ $json.proveedor }} (${{ $json.monto }} {{ $json.moneda }}) necesita aprobación: {{ $json.motivo_excepcion }}"
+      }
+    },
+    {
+      "id": "w24",
+      "name": "Mark Conciliada",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [3080, 600],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "matchingColumns": "id",
+        "fieldsUi": { "fieldValues": [{ "fieldId": "estado", "fieldValue": "conciliada" }, { "fieldId": "conciliado_en", "fieldValue": "={{ $now.toISO() }}" }] }
+      },
+      "notes": "Único camino que llega acá sin pasar por aprobación humana: pasó dedup, confianza, OC y monto, y la moneda coincide con la esperada del proveedor."
+    },
+    {
+      "id": "w25",
+      "name": "Notify - Conciliada",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [3300, 600],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": "#andesfreight-cuentas-a-pagar",
+        "text": "=Factura {{ $json.numero_factura }} de {{ $json.proveedor }} conciliada automáticamente contra OC {{ $json.numero_oc }}."
+      }
+    }
+  ],
+  "connections": {
+    "Email Trigger - Facturas": { "main": [[{ "node": "Upload Attachment", "type": "main", "index": 0 }]] },
+    "Upload Attachment": { "main": [[{ "node": "Insert Factura (Raw)", "type": "main", "index": 0 }]] },
+    "Insert Factura (Raw)": { "main": [[{ "node": "Extract With AI", "type": "main", "index": 0 }]] },
+    "Extract With AI": { "main": [[{ "node": "Parse AI Response", "type": "main", "index": 0 }]] },
+    "Parse AI Response": { "main": [[{ "node": "Update Factura - Extraida", "type": "main", "index": 0 }]] },
+    "Update Factura - Extraida": { "main": [[{ "node": "Check Duplicate", "type": "main", "index": 0 }]] },
+    "Check Duplicate": { "main": [[{ "node": "If Duplicate", "type": "main", "index": 0 }]] },
+    "If Duplicate": {
+      "main": [
+        [{ "node": "Mark Duplicada", "type": "main", "index": 0 }],
+        [{ "node": "If Confianza Baja", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Duplicada": { "main": [[{ "node": "Notify - Duplicada", "type": "main", "index": 0 }]] },
+    "If Confianza Baja": {
+      "main": [
+        [{ "node": "Mark Excepcion Baja Confianza", "type": "main", "index": 0 }],
+        [{ "node": "Check OC", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Excepcion Baja Confianza": { "main": [[{ "node": "Mark Pendiente Aprobacion", "type": "main", "index": 0 }]] },
+    "Check OC": { "main": [[{ "node": "If Sin OC", "type": "main", "index": 0 }]] },
+    "If Sin OC": {
+      "main": [
+        [{ "node": "Mark Excepcion Sin OC", "type": "main", "index": 0 }],
+        [{ "node": "Compute Diff Monto", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Excepcion Sin OC": { "main": [[{ "node": "Mark Pendiente Aprobacion", "type": "main", "index": 0 }]] },
+    "Compute Diff Monto": { "main": [[{ "node": "If Monto Diff", "type": "main", "index": 0 }]] },
+    "If Monto Diff": {
+      "main": [
+        [{ "node": "Mark Excepcion Monto", "type": "main", "index": 0 }],
+        [{ "node": "Check Proveedor Moneda", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Excepcion Monto": { "main": [[{ "node": "Mark Pendiente Aprobacion", "type": "main", "index": 0 }]] },
+    "Check Proveedor Moneda": { "main": [[{ "node": "If Moneda Distinta", "type": "main", "index": 0 }]] },
+    "If Moneda Distinta": {
+      "main": [
+        [{ "node": "Mark Excepcion Moneda", "type": "main", "index": 0 }],
+        [{ "node": "Mark Conciliada", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Excepcion Moneda": { "main": [[{ "node": "Mark Pendiente Aprobacion", "type": "main", "index": 0 }]] },
+    "Mark Pendiente Aprobacion": { "main": [[{ "node": "Alert - Pendiente Aprobacion", "type": "main", "index": 0 }]] },
+    "Mark Conciliada": { "main": [[{ "node": "Notify - Conciliada", "type": "main", "index": 0 }]] }
+  }
+}

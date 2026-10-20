@@ -1,0 +1,20 @@
+{
+  "object": "whatsapp_business_account",
+  "contacts": [
+    {
+      "wa_id": "5493815550505",
+      "profile": {
+        "name": "Ramiro Paz"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "from": "5493815550505",
+      "type": "text",
+      "text": {
+        "body": "Hola, quiero presupuesto de paneles.\nCiudad: Yerba Buena\nDireccion: Las Heras 330\nConsumo 1200 kwh por mes, es para una pyme."
+      }
+    }
+  ]
+}

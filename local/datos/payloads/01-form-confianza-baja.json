@@ -1,0 +1,10 @@
+{
+  "nombre": "consulta sin nombre",
+  "telefono": "+5493815550404",
+  "email": "",
+  "direccion": "zona sur",
+  "ciudad": "Tafí Viejo",
+  "tipo_cliente": "residencial",
+  "consumo_kwh": 1,
+  "urgencia": "explorando"
+}

@@ -1,0 +1,189 @@
+{
+  "name": "NortePeak — Recordatorio de seguimiento (24hs sin contacto)",
+  "meta": {
+    "note": "Export sanitizado. Workflow secundario, corre por cron, separado del intake para no acoplar el flujo síncrono (webhook) a un trabajo periódico. Caso self-initiated de portfolio, negocio ficticio."
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "f01",
+      "name": "Cron - Cada Hora",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "f02",
+      "name": "Buscar Leads Asignados Sin Contacto",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "leads",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "estado",
+              "condition": "eq",
+              "keyValue": "asignado"
+            },
+            {
+              "keyName": "fecha_asignacion",
+              "condition": "lte",
+              "keyValue": "={{ $now.minus({ hours: 24 }).toISO() }}"
+            },
+            {
+              "keyName": "recordatorio_enviado_en",
+              "condition": "is",
+              "keyValue": "null"
+            }
+          ]
+        }
+      },
+      "notes": "Solo leads que siguen en estado 'asignado' (nunca pasaron a 'contactado') 24hs después de la asignación, y que todavía no recibieron un recordatorio."
+    },
+    {
+      "id": "f03",
+      "name": "Loop Por Lead",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1
+      }
+    },
+    {
+      "id": "f04",
+      "name": "Recordatorio - Vendedor",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "user",
+        "user": "={{ $json.vendedor_asignado }}",
+        "text": "=Recordatorio: el lead de {{ $json.nombre }} ({{ $json.ciudad }}) sigue sin contacto registrado, asignado hace más de 24hs."
+      }
+    },
+    {
+      "id": "f05",
+      "name": "Marcar Recordatorio Enviado",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "operation": "update",
+        "tableId": "leads",
+        "filterType": "manual",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "recordatorio_enviado_en",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "notes": "Un solo recordatorio por lead, no un spam horario al vendedor: por eso se filtra por recordatorio_enviado_en = null en el nodo de búsqueda."
+    }
+  ],
+  "connections": {
+    "Cron - Cada Hora": {
+      "main": [
+        [
+          {
+            "node": "Buscar Leads Asignados Sin Contacto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar Leads Asignados Sin Contacto": {
+      "main": [
+        [
+          {
+            "node": "Loop Por Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Por Lead": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Recordatorio - Vendedor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recordatorio - Vendedor": {
+      "main": [
+        [
+          {
+            "node": "Marcar Recordatorio Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar Recordatorio Enviado": {
+      "main": [
+        [
+          {
+            "node": "Loop Por Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

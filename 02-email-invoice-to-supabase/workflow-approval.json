@@ -1,0 +1,274 @@
+{
+  "name": "Andes Freight — Decisión de aprobación humana",
+  "meta": {
+    "note": "Export sanitizado. Workflow secundario, separado del intake para que la decisión humana (aprobar/rechazar una excepción) no dependa de que la ejecución original siga viva. Caso self-initiated de portfolio, negocio ficticio."
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "nodes": [
+    {
+      "id": "p01",
+      "name": "Webhook - Decision",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "andesfreight/aprobacion",
+        "responseMode": "responseNode"
+      },
+      "notes": "Lo llama un formulario/botón interno de cuentas a pagar: { factura_id, decision: 'aprobar'|'rechazar', usuario }."
+    },
+    {
+      "id": "p02",
+      "name": "If Aprobar",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.decision }}",
+              "rightValue": "aprobar",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "p03",
+      "name": "Update Factura - Aprobada",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        440,
+        -100
+      ],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "estado",
+              "fieldValue": "aprobada"
+            },
+            {
+              "fieldId": "aprobado_por",
+              "fieldValue": "={{ $json.body.usuario }}"
+            },
+            {
+              "fieldId": "aprobado_en",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.id }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "p04",
+      "name": "Update Factura - Conciliada",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        660,
+        -100
+      ],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "estado",
+              "fieldValue": "conciliada"
+            },
+            {
+              "fieldId": "conciliado_en",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        }
+      },
+      "notes": "La excepción quedaba 'pendiente_aprobacion', no 'conciliada': la aprobación humana es la que efectivamente concilia, nunca se infiere sola."
+    },
+    {
+      "id": "p05",
+      "name": "Update Factura - Rechazada",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        440,
+        100
+      ],
+      "parameters": {
+        "operation": "update",
+        "tableId": "facturas",
+        "filterType": "manual",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "estado",
+              "fieldValue": "rechazada"
+            },
+            {
+              "fieldId": "aprobado_por",
+              "fieldValue": "={{ $json.body.usuario }}"
+            }
+          ]
+        },
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.body.id }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "p06",
+      "name": "Notify - Rechazada",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": "#andesfreight-cuentas-a-pagar",
+        "text": "=Factura {{ $json.numero_factura }} rechazada por {{ $('Webhook - Decision').item.json.body.usuario }}, queda fuera de la conciliación."
+      }
+    },
+    {
+      "id": "p07",
+      "name": "Respond - OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"ok\" } }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Decision": {
+      "main": [
+        [
+          {
+            "node": "If Aprobar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Aprobar": {
+      "main": [
+        [
+          {
+            "node": "Update Factura - Aprobada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Factura - Rechazada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Factura - Aprobada": {
+      "main": [
+        [
+          {
+            "node": "Update Factura - Conciliada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Factura - Conciliada": {
+      "main": [
+        [
+          {
+            "node": "Respond - OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Factura - Rechazada": {
+      "main": [
+        [
+          {
+            "node": "Notify - Rechazada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify - Rechazada": {
+      "main": [
+        [
+          {
+            "node": "Respond - OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

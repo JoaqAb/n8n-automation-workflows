@@ -1,0 +1,107 @@
+[
+ {
+  "nombre": "c06-01-entrada",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/56",
+  "nodos": [
+   "Webhook - Form",
+   "Normalize - Form",
+   "Merge Channels"
+  ]
+ },
+ {
+  "nombre": "c06-02-guarda-cruda",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/56",
+  "nodos": [
+   "Merge Channels",
+   "Insert Lead (Raw)",
+   "Check Duplicate"
+  ]
+ },
+ {
+  "nombre": "c06-03-duplicado",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/57",
+  "nodos": [
+   "If Duplicate",
+   "Mark Duplicado",
+   "Respond - Duplicado"
+  ]
+ },
+ {
+  "nombre": "c06-04-zona",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/54",
+  "nodos": [
+   "Check Zone",
+   "If Fuera de Zona"
+  ]
+ },
+ {
+  "nombre": "c06-05-dato-faltante",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/55",
+  "nodos": [
+   "Mark Dato Faltante",
+   "Respond - Dato Faltante"
+  ]
+ },
+ {
+  "nombre": "c06-06-calificacion",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/56",
+  "nodos": [
+   "AI Qualification",
+   "Parse AI Response",
+   "If Confianza Baja"
+  ]
+ },
+ {
+  "nombre": "c06-07-revision",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/59",
+  "nodos": [
+   "Mark Revision Manual",
+   "Alert - Revision Manual",
+   "Respond - Recibido (Revision)"
+  ]
+ },
+ {
+  "nombre": "c06-08-enriquecer",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/56",
+  "nodos": [
+   "Geocode Address",
+   "Update Lead - Calificado"
+  ]
+ },
+ {
+  "nombre": "c06-09-asignar",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/56",
+  "nodos": [
+   "Update Lead - Asignado",
+   "Increment Carga Vendedor",
+   "Alert - Vendedor"
+  ]
+ },
+ {
+  "nombre": "c06-10-cierre",
+  "url": "http://localhost:5678/workflow/wf01intake/executions/56",
+  "nodos": [
+   "Increment Carga Vendedor",
+   "Alert - Vendedor",
+   "Respond - Recibido (OK)"
+  ]
+ },
+ {
+  "nombre": "c06-11-seguimiento-a",
+  "url": "http://localhost:5678/workflow/wf01follow/executions/60",
+  "nodos": [
+   "Cron - Cada Hora",
+   "Buscar Leads Asignados Sin Contacto",
+   "Loop Por Lead"
+  ]
+ },
+ {
+  "nombre": "c06-12-seguimiento-b",
+  "url": "http://localhost:5678/workflow/wf01follow/executions/60",
+  "nodos": [
+   "Loop Por Lead",
+   "Recordatorio - Vendedor",
+   "Marcar Recordatorio Enviado"
+  ]
+ }
+]

@@ -1,0 +1,10 @@
+{
+  "nombre": "Hernan Juarez",
+  "telefono": "+5493855550202",
+  "email": "hernan.juarez@ejemplo.test",
+  "direccion": "Av. Belgrano 740",
+  "ciudad": "Santiago del Estero",
+  "tipo_cliente": "pyme",
+  "consumo_kwh": 2400,
+  "urgencia": "este_mes"
+}
