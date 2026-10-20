@@ -1,22 +1,26 @@
 # n8n Automation Workflows
 
-Colección de workflows de n8n documentados como case studies.
-Cada carpeta incluye el export sanitizado del workflow, el esquema de datos
-que usa y la documentación de las decisiones de diseño detrás de él.
+A collection of n8n workflows documented as case studies. Each folder has the
+sanitised export of the workflow, the data schema it uses, and the design
+decisions behind it.
 
-Todos los casos de esta colección son **self-initiated**: negocio y datos ficticios, construidos para demostrar el mecanismo, no engagements de cliente real. La técnica de extracción/clasificación con IA que usan ya está probada en producción real en otro proyecto (bot Lokey, `lokebox-app`, cliente real Kieba) — ver cada README para el detalle.
+Every case here is **self-initiated**: the business and the data are fictional,
+built to show the mechanism, not client engagements. The AI extraction and
+classification technique they use is already running in production in another
+project (the Lokey bot, `lokebox-app`, for a real client, Kieba). See each
+README for the detail.
 
-| Workflow | Qué resuelve | Integraciones | Estado |
+| Workflow | What it solves | Integrations | Status |
 |---|---|---|---|
-| [01-whatsapp-to-supabase](./01-whatsapp-to-supabase) | NortePeak (instalador solar, ficticio): lead de formulario web o WhatsApp → normalización → calificación con IA → enrichment → Supabase → routing por zona/carga → alerta y seguimiento | WhatsApp Cloud API, Supabase, Claude API, Slack, Nominatim | Corrido el 18/10/2026: las seis ramas y el seguimiento, una ejecución por rama ([detalle](./01-whatsapp-to-supabase#resultado-y-evidencia)) |
-| [02-email-invoice-to-supabase](./02-email-invoice-to-supabase) | Andes Freight (freight forwarding, ficticio): factura por email → extracción con IA → validación contra orden de compra → 4 excepciones explícitas → cola de aprobación humana → conciliación | Email (IMAP), Supabase, Supabase Storage, Claude API, Slack | Corrido el 18/10/2026: las seis ramas y las dos decisiones de aprobación ([detalle](./02-email-invoice-to-supabase#resultado-y-evidencia)) |
-| 03-placeholder | Sin asignar | — | Pendiente |
+| [01-whatsapp-to-supabase](./01-whatsapp-to-supabase) | NortePeak (fictional solar installer): a lead arrives from a web form or WhatsApp, is normalised, qualified with AI, enriched, stored in Supabase, routed by zone and workload, and followed up | WhatsApp Cloud API, Supabase, Claude API, Slack, Nominatim | Run on 18/10/2026: the six branches and the follow-up, one execution each ([detail](./01-whatsapp-to-supabase#result-and-evidence)) |
+| [02-email-invoice-to-supabase](./02-email-invoice-to-supabase) | Andes Freight (fictional freight forwarder): an invoice arrives by email, the fields are extracted with AI, checked against the purchase order, four exceptions are named explicitly, and a person approves what does not match | Email (IMAP), Supabase, Supabase Storage, Claude API, Slack | Run on 18/10/2026: the six branches and the two approval decisions ([detail](./02-email-invoice-to-supabase#result-and-evidence)) |
 
-Los dos corren contra el entorno local que vive en [`local/`](./local): una base con estos
-mismos esquemas, la misma API REST que usa Supabase, un buzón de correo y un endpoint de
-archivos. Ahí están también los datos de prueba y los arreglos que hubo que hacerle a los
-nodos para que corrieran, uno por uno, en [`local/arreglos-2026-10-18.md`](./local/arreglos-2026-10-18.md).
+Both run against the local environment in [`local/`](./local): a database with
+these same schemas, the same REST API that Supabase uses, a mailbox and a file
+endpoint. The test data is there too, and so are the fixes each node needed
+before it would run, one by one, in
+[`local/arreglos-2026-10-18.md`](./local/arreglos-2026-10-18.md).
 
 ---
 
-Hecho por [@JoaqAb](https://github.com/JoaqAb) · Portfolio: [lokebox.com/portfolio](https://lokebox.com/portfolio)
+Built by [@JoaqAb](https://github.com/JoaqAb) · Portfolio: [lokebox.com/portfolio](https://lokebox.com/portfolio)

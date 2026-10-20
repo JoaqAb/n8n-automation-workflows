@@ -1,88 +1,81 @@
-# 02 · Email → Supabase — Andes Freight (extracción y validación de facturas)
+# 02 · Email → Supabase: Andes Freight (invoice extraction and validation)
 
-> **Nota:** `workflow.json` y `workflow-approval.json` son el export **sanitizado** de los workflows: sin IDs de cuenta, credenciales ni datos reales de proveedores.
+> **Note:** `workflow.json` and `workflow-approval.json` are the **sanitised** export of the workflows: no account IDs, no credentials, no real supplier data.
 
-> **SELF-INITIATED** — construido para demostrar el mecanismo, no un engagement pagado. Andes Freight es un negocio ficticio (freight forwarding) y todos los datos son sintéticos. La técnica de extracción con IA es la misma que ya está en producción real con un cliente real: ver el caso **AI Messaging & Business Automation** (bot Lokey, `lokebox-app`), que distingue recibos de cheques con el mismo mecanismo.
+> **SELF-INITIATED**: built to show the mechanism, not a paid engagement. Andes Freight is a fictional business (freight forwarding) and all the data is synthetic. The AI extraction technique is the same one already running in production with a real client: see the **AI Messaging & Business Automation** case (the Lokey bot, `lokebox-app`), which tells receipts from cheques with this same mechanism.
 
-## Problema y contexto
+## The problem
 
-Andes Freight recibe facturas de proveedores por email, como PDF o foto adjunta. Hoy alguien de cuentas a pagar las abre una por una, las tipea a mano contra la orden de compra correspondiente, y si algo no cierra (no hay OC, el monto no coincide, la moneda no es la esperada) lo resuelve sobre la marcha, sin que quede un registro de que hubo una excepción ni de quién la aprobó.
+Andes Freight receives supplier invoices by email, as a PDF or a photo attached. Today somebody in accounts payable opens them one by one, types them by hand against the matching purchase order, and when something does not add up (no PO, the amount does not match, the currency is not the expected one) they sort it out as they go, leaving no record that there was an exception or who approved it.
 
-El objetivo de este workflow es que una factura entre, se extraiga y se valide sola contra la OC, y que una persona solo la toque cuando hay una razón concreta y nombrada para hacerlo — nunca para re-tipear un dato que la IA ya pudo leer bien.
+The goal of this workflow is that an invoice arrives, is extracted and checked against the PO on its own, and that a person only touches it when there is a concrete, named reason to. Never to retype a figure the AI could already read.
 
-## Decisiones de diseño
+## Design decisions
 
-- **Subir el adjunto antes de extraer nada.** `Upload Attachment` sube el PDF/imagen a Supabase Storage y `Insert Factura (Raw)` persiste el registro con esa URL antes de llamar a la IA. Si la extracción falla, la factura no se pierde, queda en `recibida` con el adjunto accesible — mismo criterio de "persistir antes de procesar" que el caso 01 (NortePeak) y que `bot/claude.js` en producción real.
-- **Cuatro excepciones, un solo punto de confluencia.** Baja confianza de extracción, sin OC, monto que no cierra, moneda inesperada: las cuatro son caminos distintos que llegan al mismo estado (`pendiente_aprobacion`) con un `motivo_excepcion` específico. Nunca se autoaprueba nada por descarte ni por silencio.
-- **La aprobación es un workflow separado.** `workflow.json` nunca espera una respuesta humana en vivo (eso bloquearía la ejecución de n8n indefinidamente); deja la factura en `pendiente_aprobacion` y notifica. La decisión real (aprobar/rechazar) la toma `workflow-approval.json`, disparado por un webhook cuando alguien de cuentas a pagar decide — mismo patrón de separación que el intake/follow-up del caso 01.
-- **Conciliar es un verbo, no un estado por defecto.** Una factura solo pasa a `conciliada` por dos caminos explícitos: automático (pasó las 4 validaciones sin excepción) o humano (alguien aprobó la excepción). Nunca hay un tercer camino que la marque conciliada "por las dudas".
-- **Dedup por proveedor + número de factura, con índice único condicional.** El índice `idx_facturas_proveedor_numero` en `schema.sql` excluye explícitamente las facturas ya rechazadas o duplicadas, para no bloquear un reintento legítimo después de una corrección.
+- **Upload the attachment before extracting anything.** `Upload Attachment` puts the PDF or image into Supabase Storage and `Insert Factura (Raw)` saves the row with that URL before the AI is called. If the extraction fails the invoice is not lost: it stays in `recibida` with the attachment reachable. It is the same "save before processing" rule as case 01 (NortePeak) and as `bot/claude.js` in real production.
+- **Four exceptions, one meeting point.** Low extraction confidence, no PO, an amount that does not add up, an unexpected currency: four different paths that reach the same state (`pendiente_aprobacion`) with a specific `motivo_excepcion`. Nothing is ever approved by elimination or by silence.
+- **Approval is a separate workflow.** `workflow.json` never waits for a live human answer (that would block the n8n execution indefinitely). It leaves the invoice in `pendiente_aprobacion` and notifies. The actual decision, approve or reject, is taken by `workflow-approval.json`, fired by a webhook when somebody in accounts payable decides. Same separation as the intake and follow-up in case 01.
+- **Reconciling is a verb, not a default state.** An invoice reaches `conciliada` through two explicit paths only: automatically, when it passed the four checks with no exception, or by a person approving the exception. There is never a third path that marks it reconciled just in case.
+- **Dedup by supplier plus invoice number, with a conditional unique index.** The `idx_facturas_proveedor_numero` index in `schema.sql` explicitly leaves out invoices already rejected or marked duplicate, so a legitimate retry after a correction is not blocked.
 
-## Infraestructura
+## Infrastructure
 
-- **n8n** (self-hosted o cloud) como orquestador, dos workflows: intake/validación (disparado por email) y aprobación (disparado por webhook).
-- **Supabase** (`facturas`, `ordenes_compra`, `proveedores`) como fuente de verdad, acceso solo por `service_role` (RLS insert/update-only).
-- **Supabase Storage** para los adjuntos originales.
-- **Claude API** (mismo proveedor que el bot Lokey en producción) para la extracción con visión.
-- **IMAP** (casilla de email dedicada) como canal de entrada.
-- **Slack** para las alertas de excepción/conciliación.
+- **n8n** (self-hosted or cloud) as the orchestrator, with two workflows: intake and validation (fired by email) and approval (fired by a webhook).
+- **Supabase** (`facturas`, `ordenes_compra`, `proveedores`) as the source of truth, reached only through `service_role` (insert and update only RLS).
+- **Supabase Storage** for the original attachments.
+- **Claude API** (the same provider as the Lokey bot in production) for the vision extraction.
+- **IMAP** (a dedicated mailbox) as the entry channel.
+- **Slack** for the exception and reconciliation alerts.
 
-## El workflow nodo por nodo
+## The workflow, node by node
 
-**Intake y validación (`workflow.json`, 25 nodos):**
+**Intake and validation (`workflow.json`, 25 nodes):**
 
-1. `Email Trigger - Facturas` → `Upload Attachment` → `Insert Factura (Raw)` — persiste con estado `recibida` antes de cualquier IA.
-2. `Extract With AI` (Claude, visión sobre el adjunto) → `Parse AI Response` → `Update Factura - Extraida`.
-3. `Check Duplicate` → `If Duplicate` — mismo proveedor + mismo número de factura ya cargado: `Mark Duplicada` → `Notify - Duplicada`, fin.
-4. `If Confianza Baja` (`confianza_extraccion < 0.75`): `Mark Excepcion Baja Confianza` → confluye en `Mark Pendiente Aprobacion`.
-5. `Check OC` → `If Sin OC`: sin orden de compra asociada → `Mark Excepcion Sin OC` → confluye en `Mark Pendiente Aprobacion`.
-6. `Compute Diff Monto` (nodo de código: % de diferencia contra la OC) → `If Monto Diff` (> 5%): `Mark Excepcion Monto` → confluye en `Mark Pendiente Aprobacion`.
-7. `Check Proveedor Moneda` → `If Moneda Distinta` (moneda extraída ≠ moneda esperada del proveedor): `Mark Excepcion Moneda` → confluye en `Mark Pendiente Aprobacion`.
-8. Si pasó las 4 validaciones sin excepción: `Mark Conciliada` → `Notify - Conciliada`, fin.
-9. Cualquier excepción: `Mark Pendiente Aprobacion` → `Alert - Pendiente Aprobacion` (Slack con el motivo específico), fin de este workflow — la decisión sigue en `workflow-approval.json`.
+1. `Email Trigger - Facturas` → `Upload Attachment` → `Insert Factura (Raw)`: saved with state `recibida` before any AI runs.
+2. `Extract With AI` (Claude, vision over the attachment) → `Parse AI Response` → `Update Factura - Extraida`.
+3. `Check Duplicate` → `If Duplicate`, same supplier and same invoice number already loaded: `Mark Duplicada` → `Notify - Duplicada`, end.
+4. `If Confianza Baja` (`confianza_extraccion < 0.75`): `Mark Excepcion Baja Confianza` → joins `Mark Pendiente Aprobacion`.
+5. `Check OC` → `If Sin OC`: no purchase order attached → `Mark Excepcion Sin OC` → joins `Mark Pendiente Aprobacion`.
+6. `Compute Diff Monto` (a code node, the percentage difference against the PO) → `If Monto Diff` (over 5%): `Mark Excepcion Monto` → joins `Mark Pendiente Aprobacion`.
+7. `Check Proveedor Moneda` → `If Moneda Distinta` (extracted currency is not the one the supplier bills in): `Mark Excepcion Moneda` → joins `Mark Pendiente Aprobacion`.
+8. If it passed the four checks with no exception: `Mark Conciliada` → `Notify - Conciliada`, end.
+9. On any exception: `Mark Pendiente Aprobacion` → `Alert - Pendiente Aprobacion` (Slack, with the specific reason), and this workflow ends. The decision carries on in `workflow-approval.json`.
 
-**Decisión de aprobación (`workflow-approval.json`, 7 nodos):** webhook con `{factura_id, decision, usuario}` → si aprueba: `Update Factura - Aprobada` → `Update Factura - Conciliada` → responde OK. Si rechaza: `Update Factura - Rechazada` → `Notify - Rechazada` → responde OK.
+**Approval decision (`workflow-approval.json`, 7 nodes):** a webhook with `{factura_id, decision, usuario}`. On approve: `Update Factura - Aprobada` → `Update Factura - Conciliada` → answers OK. On reject: `Update Factura - Rechazada` → `Notify - Rechazada` → answers OK.
 
-## Edge cases cubiertos por diseño
+## Edge cases covered by design
 
-_(Diseñados y probados contra el esquema y datos sintéticos del seed. Como es self-initiated, no hay incidentes reales de producción que citar.)_
+_(Designed and tested against the schema and the synthetic seed data. Because this is self-initiated there are no real production incidents to cite.)_
 
-- **Factura duplicada**: mismo proveedor + número de factura ya cargado → `duplicada`, no genera una segunda excepción de cuentas a pagar.
-- **Extracción de baja confianza**: `confianza_extraccion < 0.75` → excepción explícita, nunca se adivina un monto o proveedor dudoso.
-- **Sin OC asociada**: `numero_oc` vacío o inexistente en el catálogo → excepción explícita, nunca se concilia sin orden de compra.
-- **Monto que no cierra**: diferencia mayor al 5% contra la OC → excepción con el porcentaje exacto en el motivo.
-- **Moneda inesperada**: el proveedor factura en una moneda distinta a la que tiene registrada (seed: Global Reefer Parts factura siempre en USD) → excepción explícita, nunca conversión automática silenciosa.
-- **Rechazo**: la factura rechazada queda con ese estado final y su responsable (`aprobado_por`), nunca vuelve a `pendiente_aprobacion` sola.
+- **Duplicate invoice**: same supplier and invoice number already loaded → `duplicada`, with no second exception for accounts payable.
+- **Low confidence extraction**: `confianza_extraccion < 0.75` → an explicit exception. A doubtful amount or supplier is never guessed.
+- **No PO attached**: `numero_oc` empty or missing from the catalogue → an explicit exception. Nothing is reconciled without a purchase order.
+- **Amount that does not add up**: more than 5% difference against the PO → an exception with the exact percentage in the reason.
+- **Unexpected currency**: the supplier bills in a currency other than the one on file (in the seed, Global Reefer Parts always bills in USD) → an explicit exception, never a silent automatic conversion.
+- **Rejection**: a rejected invoice keeps that final state and the person responsible (`aprobado_por`). It never returns to `pendiente_aprobacion` on its own.
 
-## Resultado y evidencia
+## Result and evidence
 
-**Corrido el 18/10/2026** contra el entorno local de `local/` (Postgres con este mismo
-`schema.sql` y su `seed.sql`, PostgREST como API, un buzon IMAP local y la API de Claude de
-verdad). Las facturas de muestra las genera `local/datos/facturas.py` y son ficticias.
+**Run on 18/10/2026** against the local environment in `local/` (Postgres with this same `schema.sql` and its `seed.sql`, PostgREST as the API, a local IMAP mailbox and the real Claude API). The sample invoices are generated by `local/datos/facturas.py` and are fictional.
 
-El disparador de correo corrio de verdad: cada factura entro como un mail con su adjunto, el
-archivo original quedo guardado **antes** de que la IA lo tocara, y recien despues se extrajo.
+The email trigger ran for real: each invoice arrived as a mail with its attachment, the original file was saved **before** the AI touched it, and only then was it extracted.
 
-| corrida | factura | como termino |
+| run | invoice | how it ended |
 |---|---|---|
-| Camino feliz | 0001-00004821, Combustibles del Litoral, ARS 185.000 contra la OC-2026-0441 | extraida con confianza 0,98 y `conciliada` |
-| Monto que no cierra | 0002-00000517, ARS 72.400 contra una OC de ARS 62.000 | `excepcion_monto`, motivo `difiere 16.8% de la OC` |
-| Sin orden de compra | 0002-00000533, OC-2026-9144, que no existe | `excepcion_sin_oc` |
-| Moneda inesperada | 0002-00000540, USD de un proveedor que factura en ARS | `excepcion_moneda` con las dos monedas en el motivo |
-| Confianza baja | un escaneo chico, torcido y lavado | la extraccion devolvio 0,15 y quedo en `excepcion_baja_confianza` |
-| Duplicada | la misma factura reenviada despues de ser rechazada | `duplicada`, sin volver a validar |
-| Aprobacion humana | las dos decisiones por webhook | aprobar deja `conciliada` con su responsable; rechazar deja `rechazada` |
+| Happy path | 0001-00004821, Combustibles del Litoral, ARS 185,000 against PO-2026-0441 | extracted with confidence 0.98 and `conciliada` |
+| Amount does not add up | 0002-00000517, ARS 72,400 against a PO of ARS 62,000 | `excepcion_monto`, reason `difiere 16.8% de la OC` |
+| No purchase order | 0002-00000533, OC-2026-9144, which does not exist | `excepcion_sin_oc` |
+| Unexpected currency | 0002-00000540, USD from a supplier that bills in ARS | `excepcion_moneda`, with both currencies in the reason |
+| Low confidence | a small, tilted, washed out scan | the extraction returned 0.15 and it stayed in `excepcion_baja_confianza` |
+| Duplicate | the same invoice sent again after being rejected | `duplicada`, with no second validation |
+| Human approval | the two decisions over the webhook | approving leaves it `conciliada` with the person responsible; rejecting leaves it `rechazada` |
 
-Las cuatro excepciones terminan en `pendiente_aprobacion` con su motivo escrito, que es el
-punto del caso: ninguna factura avanza por silencio.
+The four exceptions all end in `pendiente_aprobacion` with their reason written down, which is the point of the case: no invoice moves forward by silence.
 
-**Lo que no corrio, y por que:**
+**What did not run, and why:**
 
-- **Slack.** Los cuatro nodos de aviso quedan configurados y desactivados: este caso no tiene un
-  workspace propio. En el lienzo se ven en gris.
-- **Supabase Storage.** El adjunto se sube a un endpoint local con la misma forma de pedido y de
-  respuesta. El bucket hospedado no entra en la corrida.
-- **Supabase hospedado.** La base es la misma, el esquema y las policies son estos, y la API es
-  PostgREST, que es el motor que usa Supabase.
+- **Slack.** The four notice nodes are configured and switched off: this case has no workspace of its own. They show grey on the canvas.
+- **Supabase Storage.** The attachment is uploaded to a local endpoint with the same request and response shape. The hosted bucket is not part of the run.
+- **Hosted Supabase.** The database is the same, the schema and the policies are these, and the API is PostgREST, which is the engine Supabase uses.
 
-Las capturas de los tramos del lienzo estan afuera del repo, en el material del portfolio.
+The captures of the canvas sections live outside this repo, in the portfolio material.

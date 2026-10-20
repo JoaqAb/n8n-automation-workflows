@@ -1,85 +1,79 @@
-# 01 · WhatsApp → Supabase — NortePeak (intake y calificación de leads)
+# 01 · WhatsApp → Supabase: NortePeak (lead intake and qualification)
 
-> **Nota:** `workflow.json` y `workflow-followup.json` son el export **sanitizado** de los workflows: sin IDs de cuenta, credenciales ni números de teléfono reales.
+> **Note:** `workflow.json` and `workflow-followup.json` are the **sanitised** export of the workflows: no account IDs, no credentials, no real phone numbers.
 
-> **SELF-INITIATED** — construido para demostrar el mecanismo, no un engagement pagado. NortePeak es un negocio ficticio (instalador solar residencial/PyME) y todos los datos son sintéticos. La técnica de extracción/clasificación con IA es la misma que ya está en producción real con un cliente real: ver el caso **AI Messaging & Business Automation** (bot Lokey, `lokebox-app`), construido para Kieba.
+> **SELF-INITIATED**: built to show the mechanism, not a paid engagement. NortePeak is a fictional business (a residential and small business solar installer) and all the data is synthetic. The AI extraction and classification technique is the same one already running in production with a real client: see the **AI Messaging & Business Automation** case (the Lokey bot, `lokebox-app`), built for Kieba.
 
-## Problema y contexto
+## The problem
 
-NortePeak recibe consultas de dos canales que no se hablan entre sí: un formulario en su sitio web y WhatsApp Business. Cada consulta tiene que resolverse en cuatro preguntas antes de que valga la pena que un vendedor la toque: ¿es un lead nuevo o ya lo tenemos? ¿está dentro de la zona de cobertura? ¿tenemos el dato mínimo para cotizar (consumo mensual)? ¿qué tan calificado está en presupuesto y urgencia? Hoy eso se resuelve a mano, lead por lead, por la misma persona que también tiene que venderle a los leads que ya pasaron el filtro.
+NortePeak gets enquiries from two channels that do not talk to each other: a form on its website and WhatsApp Business. Each enquiry has to answer four questions before it is worth a salesperson's time. Is this a new lead or one we already have? Is it inside the coverage area? Do we have the one figure we need to quote, the monthly consumption? And how qualified is it on budget and urgency? Today that is done by hand, lead by lead, by the same person who also has to sell to the leads that already passed the filter.
 
-El objetivo de este workflow es que un vendedor solo vea un lead cuando ya está calificado, asignado y acompañado de un resumen, nunca el mensaje crudo sin procesar.
+The goal of this workflow is that a salesperson only sees a lead once it is qualified, assigned and summarised. Never the raw message.
 
-## Decisiones de diseño
+## Design decisions
 
-- **Insertar antes de calificar, nunca después.** El lead se guarda en `leads` (estado `nuevo`) apenas llega, con el payload crudo intacto en `raw_payload`. Todo lo que pasa después (duplicado, fuera de zona, calificación, asignación) son `UPDATE` sobre ese mismo registro, nunca un insert nuevo. Si algo falla a mitad del pipeline, el dato ya está persistido y es recuperable — mismo criterio que usa `bot/claude.js` en `lokebox-app` con el mensaje original del cheque/recibo.
-- **Estado como máquina de estados única, no banderas sueltas.** `estado` es una sola columna con un `check` que enumera todos los estados posibles, incluidos los de excepción (`duplicado`, `fuera_de_zona`, `dato_faltante`, `revision_manual`). Nada de columnas booleanas (`es_duplicado`, `fuera_de_zona_flag`) que puedan contradecirse entre sí — el mismo principio que resolvió "El Libro" en `lokebox-app` (una sola fuente de verdad para el estado de un movimiento).
-- **Dos workflows, no uno.** El intake (síncrono, vía webhook) y el recordatorio de seguimiento (periódico, vía cron) están en archivos separados. Acoplar un cron de "cada hora" al mismo workflow que responde un webhook en tiempo real es una fuente clásica de timeouts y ejecuciones fantasma; separarlos es más simple de operar y de debuggear.
-- **El vendedor nunca ve el mensaje crudo.** El nodo `Alert - Vendedor` manda un resumen estructurado (score, ciudad, consumo, presupuesto estimado, urgencia), no el texto que escribió el lead. Es la misma idea que ya aplica el panel de "Ver como" en `lokebox-app`: la persona humana ve lo que necesita para actuar, no el dato crudo completo.
-- **Confianza baja no autocalifica.** Si el modelo devuelve `confianza_ia < 0.7`, el lead va a revisión manual con el motivo explícito (`motivo_revision_manual`), nunca se le asigna un score a ciegas. Mismo patrón que la "pregunta abierta" persistente del bot Lokey real cuando no identifica a un cliente.
+- **Insert before qualifying, never after.** The lead is written to `leads` (state `nuevo`) as soon as it arrives, with the raw payload kept intact in `raw_payload`. Everything after that (duplicate, out of area, qualification, assignment) is an `UPDATE` on that same row, never a new insert. If something breaks halfway through the pipeline the data is already saved and can be recovered. This is the same rule `bot/claude.js` uses in `lokebox-app` with the original message of a cheque or a receipt.
+- **State as one state machine, not loose flags.** `estado` is a single column with a `check` that lists every possible state, including the exceptions (`duplicado`, `fuera_de_zona`, `dato_faltante`, `revision_manual`). No boolean columns (`es_duplicado`, `fuera_de_zona_flag`) that can contradict each other. It is the same principle behind "El Libro" in `lokebox-app`: one source of truth for the state of a movement.
+- **Two workflows, not one.** The intake (synchronous, over a webhook) and the follow-up reminder (periodic, over cron) live in separate files. Coupling an hourly cron to the same workflow that answers a webhook in real time is a classic source of timeouts and ghost executions. Keeping them apart is simpler to run and to debug.
+- **The salesperson never sees the raw message.** The `Alert - Vendedor` node sends a structured summary (score, city, consumption, estimated budget, urgency), not the text the lead wrote. It is the same idea as the "Ver como" panel in `lokebox-app`: the person sees what they need in order to act, not the whole raw record.
+- **Low confidence does not qualify itself.** If the model returns `confianza_ia < 0.7` the lead goes to manual review with the reason written down (`motivo_revision_manual`). It never gets a score assigned blind. Same pattern as the open question the real Lokey bot keeps asking when it cannot identify a customer.
 
-## Infraestructura
+## Infrastructure
 
-- **n8n** (self-hosted o cloud) como orquestador.
-- **Supabase** (`leads`, `zonas_cobertura`, `vendedores`) como fuente de verdad, acceso solo por `service_role` desde n8n (RLS insert/update-only, ver `schema.sql`).
-- **Claude API** (mismo proveedor que el bot Lokey en producción) para la clasificación del lead.
-- **Nominatim (OpenStreetMap)** para geocoding de la dirección declarada, API pública sin credencial.
-- **WhatsApp Business Cloud API** y **formulario web propio** como los dos canales de entrada.
-- **Slack** para las alertas a vendedores y a la cola de revisión manual.
+- **n8n** (self-hosted or cloud) as the orchestrator.
+- **Supabase** (`leads`, `zonas_cobertura`, `vendedores`) as the source of truth, reached only through `service_role` from n8n (insert and update only RLS, see `schema.sql`).
+- **Claude API** (the same provider as the Lokey bot in production) for the lead classification.
+- **Nominatim (OpenStreetMap)** to geocode the declared address, a public API with no credential.
+- **WhatsApp Business Cloud API** and an **own web form** as the two entry channels.
+- **Slack** for the alerts to salespeople and to the manual review queue.
 
-## El workflow nodo por nodo
+## The workflow, node by node
 
-**Intake (`workflow.json`, 31 nodos):**
+**Intake (`workflow.json`, 31 nodes):**
 
-1. `Webhook - Form` / `Webhook - WhatsApp` — dos triggers de entrada, un solo pipeline después.
-2. `Normalize - Form` / `Normalize - WhatsApp` — cada canal tiene su propio shape de payload (el de WhatsApp además necesita parsear el texto libre del mensaje para sacar ciudad/consumo/urgencia con regex simples); las dos ramas convergen en el mismo esquema de 9 campos.
-3. `Merge Channels` → `Insert Lead (Raw)` — se persiste el lead con estado `nuevo` antes de cualquier validación.
-4. `Check Duplicate` → `If Duplicate` — busca por `telefono` en los últimos 48hs. Si hay coincidencia: `Mark Duplicado` → `Respond - Duplicado`, fin del flujo para ese lead.
-5. `Check Zone` → `If Fuera de Zona` — consulta `zonas_cobertura` por ciudad. Si no está cubierta: `Mark Fuera de Zona` → `Respond - Fuera de Zona`, se registra pero nunca llega a un vendedor.
-6. `If Dato Faltante` — si falta `consumo_declarado_kwh`: `Mark Dato Faltante` → `Respond - Dato Faltante`, se le pide el dato al lead en vez de calificar con un vacío.
-7. `AI Qualification` → `Parse AI Response` — Claude clasifica tipo de cliente, score, confianza y rango de presupuesto estimado a partir del consumo declarado.
-8. `If Confianza Baja` — si `confianza_ia < 0.7`: `Mark Revision Manual` → `Alert - Revision Manual` (Slack) → `Respond - Recibido (Revision)`.
-9. `Geocode Address` (en paralelo con `Vendedores Activos`) → `Update Lead - Calificado` — guarda score, confianza, presupuesto estimado y coordenadas.
-10. `Assign Salesperson` (nodo de código: vendedor default de la zona, o el de menor `carga_actual` si no hay default) → `Update Lead - Asignado` → `Increment Carga Vendedor`.
-11. `Alert - Vendedor` (Slack, resumen calificado) → `Respond - Recibido (OK)`.
+1. `Webhook - Form` / `Webhook - WhatsApp`: two entry triggers, a single pipeline after them.
+2. `Normalize - Form` / `Normalize - WhatsApp`: each channel has its own payload shape (the WhatsApp one also has to parse the free text of the message to pull out city, consumption and urgency with simple regular expressions). Both branches converge on the same nine field schema.
+3. `Merge Channels` → `Insert Lead (Raw)`: the lead is saved with state `nuevo` before any check runs.
+4. `Check Duplicate` → `If Duplicate`, looks up `telefono` in the last 48 hours. On a match: `Mark Duplicado` → `Respond - Duplicado`, and the flow ends for that lead.
+5. `Check Zone` → `If Fuera de Zona`, queries `zonas_cobertura` by city. If the city is not covered: `Mark Fuera de Zona` → `Respond - Fuera de Zona`. It is recorded, but it never reaches a salesperson.
+6. `If Dato Faltante`, if `consumo_declarado_kwh` is missing: `Mark Dato Faltante` → `Respond - Dato Faltante`. The flow asks the lead for the figure instead of qualifying on a blank.
+7. `AI Qualification` → `Parse AI Response`: Claude classifies customer type, score, confidence and an estimated budget range from the declared consumption.
+8. `If Confianza Baja`, if `confianza_ia < 0.7`: `Mark Revision Manual` → `Alert - Revision Manual` (Slack) → `Respond - Recibido (Revision)`.
+9. `Geocode Address` (in parallel with `Vendedores Activos`) → `Update Lead - Calificado`: saves score, confidence, estimated budget and coordinates.
+10. `Assign Salesperson` (a code node: the default salesperson for the zone, or the one with the lowest `carga_actual` if there is no default) → `Update Lead - Asignado` → `Increment Carga Vendedor`.
+11. `Alert - Vendedor` (Slack, qualified summary) → `Respond - Recibido (OK)`.
 
-**Follow-up (`workflow-followup.json`, 5 nodos):** cron cada hora → busca leads en estado `asignado` con más de 24hs sin pasar a `contactado` y sin recordatorio previo → manda un recordatorio al vendedor por Slack → marca `recordatorio_enviado_en` para no repetir el aviso.
+**Follow-up (`workflow-followup.json`, 5 nodes):** an hourly cron looks for leads in state `asignado` that have been there more than 24 hours without moving to `contactado` and with no reminder sent, sends the salesperson a reminder over Slack, and marks `recordatorio_enviado_en` so the notice is never repeated.
 
-## Edge cases cubiertos por diseño
+## Edge cases covered by design
 
-_(Diseñados y probados contra el esquema y datos sintéticos del seed. Como es self-initiated, no hay incidentes reales de producción que citar — estos son los casos que el flujo está hecho para no romper, no bugs que ya ocurrieron.)_
+_(Designed and tested against the schema and the synthetic seed data. Because this is self-initiated there are no real production incidents to cite. These are the cases the flow is built not to break on, not bugs that already happened.)_
 
-- **Lead duplicado**: mismo teléfono dentro de 48hs → se marca `duplicado` y se responde sin crear un segundo registro de trabajo para ventas.
-- **Fuera de zona**: ciudad ausente del catálogo o con `cobertura = false` (ej. Santiago del Estero en el seed) → nunca llega a un vendedor, pero queda registrado para medir demanda fuera de cobertura.
-- **Dato faltante**: sin consumo declarado → se pide el dato explícitamente, nunca se califica con un valor nulo.
-- **Confianza baja del modelo**: `confianza_ia < 0.7` → cola de revisión manual con motivo explícito, nunca autocalificación silenciosa.
-- **Vendedor sin default en la zona**: el código de asignación cae a round-robin por `carga_actual`, nunca deja un lead calificado sin asignar.
-- **Recordatorio duplicado**: el follow-up solo dispara una vez por lead (`recordatorio_enviado_en`), no un aviso por hora mientras el lead siga sin contacto.
+- **Duplicate lead**: same phone inside 48 hours → marked `duplicado` and answered, without creating a second piece of work for sales.
+- **Out of area**: a city missing from the catalogue or with `cobertura = false` (Santiago del Estero in the seed) → it never reaches a salesperson, but it is recorded so demand outside the coverage area can be measured.
+- **Missing figure**: no declared consumption → the figure is asked for explicitly, and the lead is never qualified on a null.
+- **Low model confidence**: `confianza_ia < 0.7` → manual review queue with the reason written down, never a silent self-qualification.
+- **No default salesperson for the zone**: the assignment code falls back to round robin by `carga_actual`, so a qualified lead is never left unassigned.
+- **Duplicate reminder**: the follow-up fires once per lead (`recordatorio_enviado_en`), not one notice an hour while the lead stays uncontacted.
 
-## Resultado y evidencia
+## Result and evidence
 
-**Corrido el 18/10/2026** contra el entorno local de `local/` (Postgres con este mismo
-`schema.sql` y su `seed.sql`, PostgREST como API, la API de Claude de verdad y Nominatim de
-verdad). Las seis ramas del intake y el seguimiento corrieron de punta a punta, una ejecucion
-por rama, con los cuerpos que estan versionados en `local/datos/payloads/`.
+**Run on 18/10/2026** against the local environment in `local/` (Postgres with this same `schema.sql` and its `seed.sql`, PostgREST as the API, the real Claude API and the real Nominatim). The six intake branches and the follow-up ran end to end, one execution each, with the bodies that are versioned in `local/datos/payloads/`.
 
-| rama | datos | como termino |
+| branch | data | how it ended |
 |---|---|---|
-| Fuera de zona | lead de Santiago del Estero, que el catalogo marca sin cobertura | `fuera_de_zona` y respuesta explicita al canal |
-| Dato faltante | lead sin consumo declarado | `dato_faltante` y la respuesta pide el kWh |
-| Camino feliz | lead de Yerba Buena, 850 kWh, residencial | la IA devolvio score 82 y confianza 0,72; geocodificado, `asignado` a Marina Ponce y su carga paso de 3 a 4 |
-| Duplicado | el mismo telefono dentro de las 48 horas | `duplicado`, sin volver a calificar |
-| WhatsApp | mensaje con ciudad, direccion y consumo en el texto | normalizado al mismo shape; la IA devolvio confianza 0,6 y fue a `revision_manual` |
-| Confianza baja | consulta vaga, sin nombre y con consumo de 1 kWh | `revision_manual` con el motivo `confianza_ia=0.4 por debajo del umbral 0.7` |
-| Seguimiento | el lead asignado, con la fecha de asignacion corrida 26 horas atras para no esperar un dia | recordatorio marcado, una sola vez |
+| Out of area | a lead from Santiago del Estero, which the catalogue marks as not covered | `fuera_de_zona`, with an explicit answer to the channel |
+| Missing figure | a lead with no declared consumption | `dato_faltante`, and the answer asks for the kWh |
+| Happy path | a lead from Yerba Buena, 850 kWh, residential | the AI returned score 82 and confidence 0.72; geocoded, `asignado` to Marina Ponce, and her workload went from 3 to 4 |
+| Duplicate | the same phone inside 48 hours | `duplicado`, with no second qualification |
+| WhatsApp | a message with city, address and consumption in the text | normalised to the same shape; the AI returned confidence 0.6 and it went to `revision_manual` |
+| Low confidence | a vague enquiry, no name and a consumption of 1 kWh | `revision_manual` with the reason `confianza_ia=0.4 por debajo del umbral 0.7` |
+| Follow-up | the assigned lead, with the assignment date moved 26 hours back so there was no need to wait a day | reminder marked, once only |
 
-**Lo que no corrio, y por que:**
+**What did not run, and why:**
 
-- **Slack.** Los tres nodos de alerta quedan configurados y desactivados: estos casos no tienen
-  un workspace propio. En el lienzo se ven en gris.
-- **WhatsApp Business Cloud API.** El webhook recibio un cuerpo con la forma que manda esa API,
-  no un mensaje que haya pasado por Meta.
-- **Supabase hospedado.** La base es la misma, el esquema y las policies son estos, y la API es
-  PostgREST, que es el motor que usa Supabase. El proyecto hospedado no entra en la corrida.
+- **Slack.** The three alert nodes are configured and switched off: these cases have no workspace of their own. They show grey on the canvas.
+- **WhatsApp Business Cloud API.** The webhook received a body shaped the way that API sends it, not a message that actually went through Meta.
+- **Hosted Supabase.** The database is the same, the schema and the policies are these, and the API is PostgREST, which is the engine Supabase uses. The hosted project is not part of the run.
 
-Las capturas de los tramos del lienzo estan afuera del repo, en el material del portfolio.
+The captures of the canvas sections live outside this repo, in the portfolio material.
