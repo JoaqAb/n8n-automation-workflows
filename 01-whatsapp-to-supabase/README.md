@@ -4,6 +4,8 @@
 
 > **SELF-INITIATED**: built to show the mechanism, not a paid engagement. NortePeak is a fictional business (a residential and small business solar installer) and all the data is synthetic. The AI extraction and classification technique is the same one already running in production with a real client: see the **AI Messaging & Business Automation** case (the Lokey bot, `lokebox-app`), built for Kieba.
 
+![The intake and qualification workflow in n8n: two entry points, duplicate and coverage checks, AI qualification, and assignment to a salesperson](screenshots/intake.png)
+
 ## The problem
 
 NortePeak gets enquiries from two channels that do not talk to each other: a form on its website and WhatsApp Business. Each enquiry has to answer four questions before it is worth a salesperson's time. Is this a new lead or one we already have? Is it inside the coverage area? Do we have the one figure we need to quote, the monthly consumption? And how qualified is it on budget and urgency? Today that is done by hand, lead by lead, by the same person who also has to sell to the leads that already passed the filter.
@@ -76,4 +78,6 @@ _(Designed and tested against the schema and the synthetic seed data. Because th
 - **WhatsApp Business Cloud API.** The webhook received a body shaped the way that API sends it, not a message that actually went through Meta.
 - **Hosted Supabase.** The database is the same, the schema and the policies are these, and the API is PostgREST, which is the engine Supabase uses. The hosted project is not part of the run.
 
-The captures of the canvas sections live outside this repo, in the portfolio material.
+The follow-up reminder is a separate scheduled workflow, so it never blocks the live intake:
+
+![The follow-up workflow in n8n](screenshots/followup.png)

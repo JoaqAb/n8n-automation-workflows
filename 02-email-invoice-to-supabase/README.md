@@ -4,6 +4,8 @@
 
 > **SELF-INITIATED**: built to show the mechanism, not a paid engagement. Andes Freight is a fictional business (freight forwarding) and all the data is synthetic. The AI extraction technique is the same one already running in production with a real client: see the **AI Messaging & Business Automation** case (the Lokey bot, `lokebox-app`), which tells receipts from cheques with this same mechanism.
 
+![The invoice workflow in n8n: extraction with Claude and the four validation branches](screenshots/intake.png)
+
 ## The problem
 
 Andes Freight receives supplier invoices by email, as a PDF or a photo attached. Today somebody in accounts payable opens them one by one, types them by hand against the matching purchase order, and when something does not add up (no PO, the amount does not match, the currency is not the expected one) they sort it out as they go, leaving no record that there was an exception or who approved it.
@@ -78,4 +80,6 @@ The four exceptions all end in `pendiente_aprobacion` with their reason written 
 - **Supabase Storage.** The attachment is uploaded to a local endpoint with the same request and response shape. The hosted bucket is not part of the run.
 - **Hosted Supabase.** The database is the same, the schema and the policies are these, and the API is PostgREST, which is the engine Supabase uses.
 
-The captures of the canvas sections live outside this repo, in the portfolio material.
+The human decision is a separate workflow, triggered when someone approves or rejects an exception, so a pending decision never blocks the automated intake:
+
+![The approval workflow in n8n](screenshots/approval.png)

@@ -21,6 +21,8 @@ endpoint. The test data is there too, and so are the fixes each node needed
 before it would run, one by one, in
 [`local/arreglos-2026-10-18.md`](./local/arreglos-2026-10-18.md).
 
+![NortePeak, the lead intake and qualification workflow, in n8n](01-whatsapp-to-supabase/screenshots/intake.png)
+
 ---
 
 Built by [@JoaqAb](https://github.com/JoaqAb) · Portfolio: [lokebox.com/portfolio](https://lokebox.com/portfolio)
